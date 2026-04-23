@@ -1,12 +1,12 @@
 package io.jacoco.otel;
 
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.metrics.Meter;
 import io.opentelemetry.api.metrics.ObservableDoubleMeasurement;
 import org.jacoco.core.data.ExecutionDataStore;
 
-import java.lang.instrument.Instrumentation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -16,17 +16,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * Orchestrates the periodic coverage collection and OTel metric export.
+ * Orchestrates periodic coverage collection and OTel metric export.
  *
  * <h3>Startup flow</h3>
  * <ol>
- *   <li>Wait {@code max(gracePeriod, interval)} seconds before the first collection.
- *       This gives other Java agents (e.g., OTel zero-code agent, JaCoCo) time to
- *       initialize before we attempt to read the MBean or inspect GlobalOpenTelemetry.</li>
- *   <li>On first tick: read JaCoCo → analyze → update {@link CoverageCache} →
- *       resolve OTel (lazy, cached) → register gauge callbacks once.</li>
- *   <li>On subsequent ticks: read JaCoCo → analyze → update cache.
- *       The gauge callbacks read from the cache whenever the OTel SDK collector fires.</li>
+ *   <li>{@link #start()} registers the five gauge callbacks immediately — the SDK is
+ *       guaranteed to be ready at this point regardless of deployment mode.</li>
+ *   <li>The first data collection fires after {@code max(gracePeriod, interval)} seconds,
+ *       giving JaCoCo time to initialise its MBean.</li>
+ *   <li>Each tick: read JaCoCo → analyze → update {@link CoverageCache}.</li>
+ *   <li>The gauge callbacks read from the cache whenever the OTel SDK collector fires.</li>
  * </ol>
  *
  * <h3>Metrics produced</h3>
@@ -40,38 +39,46 @@ import java.util.function.Consumer;
  */
 public class CoverageMetricsReporter {
 
-    private static final AttributeKey<String> SCOPE_KEY   = AttributeKey.stringKey("scope");
-    private static final Attributes           TOTAL_ATTRS = Attributes.of(SCOPE_KEY, "total");
+    private static final String            METER_NAME  = "io.jacoco.otel";
+    private static final AttributeKey<String> SCOPE_KEY = AttributeKey.stringKey("scope");
+    private static final Attributes        TOTAL_ATTRS = Attributes.of(SCOPE_KEY, "total");
 
-    private final AgentConfig             config;
-    private final OtelProvider            otelProvider;
-    private final JacocoCoverageReader    coverageReader;
-    private final CoverageAnalyzer        coverageAnalyzer;
-    private final CoverageCache           coverageCache;
+    private final AgentConfig              config;
+    private final OpenTelemetry            otel;
+    private final JacocoCoverageReader     coverageReader;
+    private final CoverageAnalyzer         coverageAnalyzer;
+    private final CoverageCache            coverageCache;
     private final ScheduledExecutorService scheduler;
 
     /** Holds strong references to registered gauges so they are not garbage-collected. */
     private final List<AutoCloseable> gaugeHandles = new ArrayList<AutoCloseable>();
-    private volatile boolean gaugesRegistered = false;
 
-    public CoverageMetricsReporter(AgentConfig config, Instrumentation instrumentation) {
-        this.config           = config;
-        this.otelProvider     = new OtelProvider(config);
-        this.coverageReader   = new JacocoCoverageReader();
-        this.coverageAnalyzer = new CoverageAnalyzer(instrumentation);
-        this.coverageCache    = new CoverageCache();
-        this.scheduler        = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
+    public CoverageMetricsReporter(AgentConfig config, OpenTelemetry otel) {
+        this.config          = config;
+        this.otel            = otel;
+        this.coverageReader  = new JacocoCoverageReader();
+        this.coverageAnalyzer = new CoverageAnalyzer();
+        this.coverageCache   = new CoverageCache();
+        this.scheduler       = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
             public Thread newThread(Runnable r) {
                 Thread t = new Thread(r, "jacoco-otel-reporter");
-                t.setDaemon(true); // must not prevent JVM shutdown
+                t.setDaemon(true);
                 return t;
             }
         });
     }
 
-    /** Schedules the periodic coverage collection. */
+    /**
+     * Registers OTel gauges immediately (SDK is ready at call time) then schedules
+     * the periodic JaCoCo data collection.
+     */
     public void start() {
         JacocoOtelAgent.log("Config: " + config);
+
+        // Register gauges now — the SDK is guaranteed ready in both deployment modes.
+        Meter meter = otel.getMeter(METER_NAME);
+        registerGauges(meter);
+
         long delaySeconds = Math.max(config.getGracePeriodSeconds(), config.getIntervalSeconds());
         JacocoOtelAgent.log("First collection in " + delaySeconds + "s, then every " +
             config.getIntervalSeconds() + "s");
@@ -84,34 +91,17 @@ public class CoverageMetricsReporter {
     }
 
     // -------------------------------------------------------------------------
-    // Tick
+    // Tick — reads JaCoCo data and refreshes the cache
     // -------------------------------------------------------------------------
 
     private void tick() {
         try {
-            // 1. Read JaCoCo execution data via JMX MBean
             ExecutionDataStore executionData = coverageReader.read();
             if (executionData == null) return;
 
-            // 2. Analyze against class bytecode and update the cache
             CoverageSummary summary = coverageAnalyzer.analyze(executionData);
             coverageCache.update(summary);
             JacocoOtelAgent.log(summary.toString());
-
-            // 3. Register gauges once — OTel is resolved lazily on this first call.
-            //    In inherit mode the zero-code agent may initialise its SDK lazily (e.g. as a
-            //    Spring bean). If the resolved meter is still a default/noop placeholder, skip
-            //    registration this tick and retry on the next one.
-            if (!gaugesRegistered) {
-                Meter meter = otelProvider.getMeter();
-                if (!OtelProvider.isSdkReady(otelProvider.getResolvedOtel())) {
-                    JacocoOtelAgent.log("OTel SDK not ready yet (" +
-                        meter.getClass().getSimpleName() + "), will retry next tick");
-                } else {
-                    registerGauges(meter);
-                    gaugesRegistered = true;
-                }
-            }
         } catch (Exception e) {
             JacocoOtelAgent.warn("Error during coverage tick: " + e.getMessage());
         }
@@ -122,10 +112,6 @@ public class CoverageMetricsReporter {
     // -------------------------------------------------------------------------
 
     private void registerGauges(Meter meter) {
-
-        // buildWithCallback takes Consumer<ObservableDoubleMeasurement> (java.util.function)
-        // and returns ObservableDoubleGauge which implements AutoCloseable.
-
         gaugeHandles.add(
             meter.gaugeBuilder("jacoco.coverage.instructions.ratio")
                 .setDescription("JaCoCo instruction coverage ratio (covered / total instructions)")

@@ -16,7 +16,10 @@
         <maven.compiler.target>8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <jacoco.version>0.8.11</jacoco.version>
-        <otel.version>1.38.0</otel.version>
+        <otel.version>2.2.0</otel.version>
+        <!-- Extension API version must match the zero-code agent being used at runtime.
+             2.2.0 is a reasonable baseline; bump this to match your agent if needed. -->
+        <otel.agent.version>2.2.0</otel.agent.version>
     </properties>
 
     <dependencies>
@@ -29,10 +32,9 @@
 
         <!--
             OTel API: NOT relocated in the shade step.
-            When the target app already has OTel configured (zero-code agent or manual SDK),
-            the system/bootstrap classloader will have loaded GlobalOpenTelemetry first.
-            Our code calls the same GlobalOpenTelemetry.get() and piggybacks on that instance.
-            When no OTel is present, this copy of the API is the one used at runtime.
+            In standalone mode this copy is used at runtime.
+            In extension mode the zero-code agent provides the API via the bootstrap
+            classloader; parent-delegation means our code shares the same classes.
         -->
         <dependency>
             <groupId>io.opentelemetry</groupId>
@@ -57,6 +59,24 @@
             <groupId>io.opentelemetry</groupId>
             <artifactId>opentelemetry-exporter-otlp</artifactId>
             <version>${otel.version}</version>
+        </dependency>
+
+        <!--
+            OTel extension API: compile-time only (provided by the zero-code agent at runtime).
+            Gives us AgentListener.afterAgent() which fires once the agent SDK is fully ready.
+            NOT included in the shaded jar — the zero-code agent provides these classes.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry.javaagent</groupId>
+            <artifactId>opentelemetry-javaagent-extension-api</artifactId>
+            <version>${otel.agent.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-extension-autoconfigure</artifactId>
+            <version>${otel.version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

@@ -11,7 +11,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.instrument.Instrumentation;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Set;
@@ -40,12 +39,7 @@ public class CoverageAnalyzer {
     /** Internal form, e.g. "io/jacoco/otel/CoverageAnalyzer" */
     private static final String OWN_PREFIX = "io/jacoco/otel/";
 
-    @SuppressWarnings("unused")
-    private final Instrumentation instrumentation; // reserved for future class-byte capture
-
-    public CoverageAnalyzer(Instrumentation instrumentation) {
-        this.instrumentation = instrumentation;
-    }
+    public CoverageAnalyzer() {}
 
     // -------------------------------------------------------------------------
     // Public API
