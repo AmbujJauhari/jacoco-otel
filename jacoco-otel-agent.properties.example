@@ -1,0 +1,72 @@
+# =============================================================================
+# jacoco-otel-agent.properties — example configuration file
+#
+# Usage:
+#   -javaagent:jacoco-otel-agent.jar=config=/path/to/this/file.properties
+#
+# All properties can also be set via environment variables (higher precedence).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Coverage collection
+# ---------------------------------------------------------------------------
+
+# How often (in seconds) to read JaCoCo and push metrics.
+# Default: 60
+coverage.interval=60
+
+# How long (in seconds) to wait before the very first collection.
+# This grace period allows JaCoCo and any OTel agent to fully initialize
+# before we try to read the MBean or inspect GlobalOpenTelemetry.
+# The actual first-run delay is max(grace.period, interval).
+# Default: 30
+coverage.grace.period=30
+
+# ---------------------------------------------------------------------------
+# OTel resolution mode
+# ---------------------------------------------------------------------------
+
+# Controls how the agent finds (or creates) an OTel SDK instance.
+#
+#   auto       (default) Detect automatically: check standard OTel env vars
+#              (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, etc.) and
+#              inspect GlobalOpenTelemetry. Use inherit if either signals an
+#              existing SDK; otherwise create a standalone SDK from otel.* below.
+#
+#   inherit    Always use GlobalOpenTelemetry.get() — the app's existing SDK.
+#              Endpoint, service name, and all resource attributes come from the
+#              app's own OTel setup. otel.* settings below are ignored.
+#              Use this when auto-detection is unreliable in your environment.
+#
+#   standalone Always create the agent's own SDK from the otel.* settings below,
+#              regardless of what the app has configured.
+#
+# Env var: JACOCO_OTEL_MODE
+# Default: auto
+# otel.mode=auto
+
+# ---------------------------------------------------------------------------
+# Standalone SDK settings
+# Used when mode=standalone, or when mode=auto and no existing OTel is found.
+# Ignored in inherit mode.
+# ---------------------------------------------------------------------------
+
+# OTLP collector endpoint (base URL — /v1/metrics is appended automatically).
+# Env var: JACOCO_OTEL_ENDPOINT
+# Example: http://localhost:4318
+otel.endpoint=http://localhost:4318
+
+# Service name reported in OTel resource attributes.
+# Env var: JACOCO_OTEL_SERVICE_NAME
+# Default: unknown-service
+otel.service.name=my-service
+
+# Export protocol: http/protobuf (default) or grpc
+# Env var: JACOCO_OTEL_PROTOCOL
+otel.protocol=http/protobuf
+
+# Optional extra HTTP headers sent to the collector (e.g., authentication).
+# Format: key=value,key=value  (no spaces around = or ,)
+# Env var: JACOCO_OTEL_HEADERS
+# Example: Authorization=Bearer my-token,X-Tenant=my-org
+# otel.headers=

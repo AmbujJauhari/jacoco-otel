@@ -1,0 +1,12 @@
+# IDE
+.idea/
+*.iml
+
+# Claude Code session data
+.claude/
+
+# Scratch files
+curl
+
+# Build output
+target/

@@ -1,0 +1,130 @@
+version: "3.8"
+
+# =============================================================================
+# JaCoCo OTel Demo Stack
+#
+# Services:
+#   lgtm       — grafana/otel-lgtm: all-in-one OTel Collector + Prometheus +
+#                Grafana + Loki + Tempo (single image)
+#   demo-app   — Spring Boot app with JaCoCo agent + our coverage agent
+#
+# Usage:
+#   docker compose up --build
+#
+# Both the coverage agent jar and the demo app are built inside Docker —
+# no local JDK or pre-built jars required.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # LGTM all-in-one stack
+  # Grafana UI:    http://localhost:3000  (admin / admin)
+  # OTLP HTTP:     http://localhost:4318
+  # OTLP gRPC:     http://localhost:4317
+  # Prometheus:    http://localhost:9090  (internal, also exposed for debugging)
+  # ---------------------------------------------------------------------------
+  lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: lgtm
+    ports:
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "9090:9090"   # Prometheus (optional, for direct querying)
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - lgtm-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/health | grep -q ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Demo Spring Boot application
+  #
+  # JVM startup flags:
+  #   1. JaCoCo agent in MBean mode — registers org.jacoco:type=Runtime MBean
+  #   2. Our coverage agent — reads that MBean and sends metrics to LGTM
+  #
+  # Environment variables configure the coverage agent in standalone mode
+  # (the demo app has no OTel SDK of its own, so the agent creates one).
+  # ---------------------------------------------------------------------------
+  demo-app:
+    build:
+      context: .
+      dockerfile: demo-app/Dockerfile
+    container_name: demo-app
+    ports:
+      - "8080:8080"
+    depends_on:
+      lgtm:
+        condition: service_healthy
+    environment:
+      # Our coverage agent — standalone mode config
+      - JACOCO_OTEL_ENDPOINT=http://lgtm:4318
+      - JACOCO_OTEL_SERVICE_NAME=demo-app
+      - JACOCO_OTEL_INTERVAL=30          # export every 30 seconds
+      - JACOCO_OTEL_GRACE_PERIOD=20      # wait 20s before first collection
+      # Resource attributes attached to every metric from this service.
+      # Resource.getDefault() reads OTEL_RESOURCE_ATTRIBUTES automatically,
+      # so these flow through in both standalone and inherit modes with no code changes.
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=demo,team=backend
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Same demo app, but with the OTel zero-code Java agent attached.
+  #
+  # The standard OTEL_* env vars are set — our coverage agent auto-detects them
+  # and switches to inherit mode: it reuses GlobalOpenTelemetry (populated by
+  # the zero-code agent) instead of creating its own standalone SDK.
+  #
+  # Run in isolation:
+  #   docker compose up --build demo-app-inherit
+  # ---------------------------------------------------------------------------
+  demo-app-inherit:
+    build:
+      context: .
+      dockerfile: demo-app/Dockerfile
+    container_name: demo-app-inherit
+    ports:
+      - "8081:8080"
+    depends_on:
+      lgtm:
+        condition: service_healthy
+    environment:
+      # Standard OTel env vars consumed by the zero-code agent
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318
+      - OTEL_SERVICE_NAME=demo-app-inherit
+      - OTEL_METRIC_EXPORT_INTERVAL=30000
+      # Our coverage agent: no JACOCO_OTEL_* endpoint needed — inherits from zero-code agent
+      - JACOCO_OTEL_INTERVAL=30
+      - JACOCO_OTEL_GRACE_PERIOD=20
+      # Resource attributes — inherited by our agent automatically via GlobalOpenTelemetry
+      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=demo,team=backend
+    entrypoint: ["java",
+      "-javaagent:/agents/otel-agent.jar",
+      "-javaagent:/agents/jacoco-agent.jar=output=none,includes=io.jacoco.demo.*",
+      "-javaagent:/agents/jacoco-otel-agent.jar",
+      "-jar", "app.jar"]
+    profiles:
+      - inherit
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/actuator/health | grep -q UP || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  lgtm-data:
