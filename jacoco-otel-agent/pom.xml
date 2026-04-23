@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>io.jacoco</groupId>
+    <artifactId>jacoco-otel-agent</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    <name>JaCoCo OTel Agent</name>
+    <description>Java agent that reads JaCoCo coverage and exports it as OpenTelemetry metrics</description>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <jacoco.version>0.8.11</jacoco.version>
+        <otel.version>1.38.0</otel.version>
+    </properties>
+
+    <dependencies>
+        <!-- JaCoCo core: execution data reading + coverage analysis -->
+        <dependency>
+            <groupId>org.jacoco</groupId>
+            <artifactId>org.jacoco.core</artifactId>
+            <version>${jacoco.version}</version>
+        </dependency>
+
+        <!--
+            OTel API: NOT relocated in the shade step.
+            When the target app already has OTel configured (zero-code agent or manual SDK),
+            the system/bootstrap classloader will have loaded GlobalOpenTelemetry first.
+            Our code calls the same GlobalOpenTelemetry.get() and piggybacks on that instance.
+            When no OTel is present, this copy of the API is the one used at runtime.
+        -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+            <version>${otel.version}</version>
+        </dependency>
+
+        <!-- OTel SDK: used only in standalone mode; shaded to avoid conflicts -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk</artifactId>
+            <version>${otel.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-metrics</artifactId>
+            <version>${otel.version}</version>
+        </dependency>
+
+        <!-- OTLP HTTP exporter (HTTP/protobuf, lighter than gRPC) -->
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
+            <version>${otel.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.2</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>false</shadedArtifactAttached>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <relocations>
+                                <!--
+                                    Shade the OTel SDK and exporter — NOT the API.
+                                    The API (io.opentelemetry.api.*) stays unshaded so that
+                                    GlobalOpenTelemetry.get() works against the same class
+                                    loaded by the app or the OTel zero-code agent.
+                                -->
+                                <relocation>
+                                    <pattern>io.opentelemetry.sdk</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.io.opentelemetry.sdk</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>io.opentelemetry.exporter</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.io.opentelemetry.exporter</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>io.opentelemetry.internal</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.io.opentelemetry.internal</shadedPattern>
+                                </relocation>
+                                <!-- Shade JaCoCo to avoid conflicts with app's JaCoCo version -->
+                                <relocation>
+                                    <pattern>org.jacoco</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.org.jacoco</shadedPattern>
+                                </relocation>
+                                <!-- Shade ASM (used by JaCoCo) -->
+                                <relocation>
+                                    <pattern>org.objectweb.asm</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.org.objectweb.asm</shadedPattern>
+                                </relocation>
+                                <!-- Shade HTTP client used by OTel exporter -->
+                                <relocation>
+                                    <pattern>okhttp3</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.okhttp3</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>okio</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.okio</shadedPattern>
+                                </relocation>
+                                <!-- Shade gRPC + protobuf -->
+                                <relocation>
+                                    <pattern>io.grpc</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.io.grpc</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>com.google.protobuf</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.com.google.protobuf</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>com.google.common</pattern>
+                                    <shadedPattern>io.jacoco.otel.shaded.com.google.common</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <manifestEntries>
+                                        <Premain-Class>io.jacoco.otel.JacocoOtelAgent</Premain-Class>
+                                        <Agent-Class>io.jacoco.otel.JacocoOtelAgent</Agent-Class>
+                                        <Can-Retransform-Classes>false</Can-Retransform-Classes>
+                                        <Can-Redefine-Classes>false</Can-Redefine-Classes>
+                                        <Implementation-Title>jacoco-otel-agent</Implementation-Title>
+                                        <Implementation-Version>1.0.0</Implementation-Version>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
