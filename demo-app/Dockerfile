@@ -51,6 +51,6 @@ COPY --from=agent-build /build/target/jacoco-otel-agent-*.jar /agents/jacoco-ote
 EXPOSE 8080
 
 ENTRYPOINT ["java", \
-  "-javaagent:/agents/jacoco-agent.jar=output=none,includes=io.jacoco.demo.*", \
+  "-javaagent:/agents/jacoco-agent.jar=output=file,destfile=/app/coverage/jacoco.exec,includes=io.jacoco.demo.*", \
   "-javaagent:/agents/jacoco-otel-agent.jar", \
   "-jar", "app.jar"]

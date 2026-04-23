@@ -121,7 +121,7 @@ services:
     entrypoint: ["java",
       "-javaagent:/agents/otel-agent.jar",
       "-Dotel.javaagent.extensions=/agents/jacoco-otel-agent.jar",
-      "-javaagent:/agents/jacoco-agent.jar=output=none,includes=io.jacoco.demo.*",
+      "-javaagent:/agents/jacoco-agent.jar=output=file,destfile=/app/coverage/jacoco.exec,includes=io.jacoco.demo.*",
       "-jar", "app.jar"]
     profiles:
       - inherit

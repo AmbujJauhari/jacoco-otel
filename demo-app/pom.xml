@@ -65,10 +65,13 @@
             <!--
                 JaCoCo Maven plugin — used only for local report generation, not
                 during the Docker build.
-                Reads the exec file dumped by /api/coverage/dump from the running
-                container (bind-mounted to ./coverage/jacoco.exec on the host).
 
-                Usage after dumping:
+                The JaCoCo agent runs with output=file,destfile=/app/coverage/jacoco.exec.
+                That path is bind-mounted to ./coverage/ on the host (see docker-compose.yml),
+                so the exec file appears there automatically when the container shuts down.
+
+                Usage:
+                  docker stop demo-app          (graceful shutdown writes the exec file)
                   mvn jacoco:report -f demo-app/pom.xml
                   open demo-app/target/site/jacoco/index.html
             -->
