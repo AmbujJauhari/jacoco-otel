@@ -98,10 +98,19 @@ public class CoverageMetricsReporter {
             coverageCache.update(summary);
             JacocoOtelAgent.log(summary.toString());
 
-            // 3. Register gauges once — OTel is resolved lazily on this first call
+            // 3. Register gauges once — OTel is resolved lazily on this first call.
+            //    In inherit mode the zero-code agent may initialise its SDK lazily (e.g. as a
+            //    Spring bean). If the resolved meter is still a default/noop placeholder, skip
+            //    registration this tick and retry on the next one.
             if (!gaugesRegistered) {
-                registerGauges();
-                gaugesRegistered = true;
+                Meter meter = otelProvider.getMeter();
+                if (!OtelProvider.isSdkReady(otelProvider.getResolvedOtel())) {
+                    JacocoOtelAgent.log("OTel SDK not ready yet (" +
+                        meter.getClass().getSimpleName() + "), will retry next tick");
+                } else {
+                    registerGauges(meter);
+                    gaugesRegistered = true;
+                }
             }
         } catch (Exception e) {
             JacocoOtelAgent.warn("Error during coverage tick: " + e.getMessage());
@@ -112,8 +121,7 @@ public class CoverageMetricsReporter {
     // OTel gauge registration
     // -------------------------------------------------------------------------
 
-    private void registerGauges() {
-        Meter meter = otelProvider.getMeter();
+    private void registerGauges(Meter meter) {
 
         // buildWithCallback takes Consumer<ObservableDoubleMeasurement> (java.util.function)
         // and returns ObservableDoubleGauge which implements AutoCloseable.

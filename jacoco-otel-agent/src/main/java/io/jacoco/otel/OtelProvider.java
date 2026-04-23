@@ -54,6 +54,11 @@ public class OtelProvider {
         return getOrResolve().getMeter(METER_NAME);
     }
 
+    /** Returns the resolved {@link OpenTelemetry} instance (may be a noop if not yet ready). */
+    public OpenTelemetry getResolvedOtel() {
+        return getOrResolve();
+    }
+
     // -------------------------------------------------------------------------
     // Resolution
     // -------------------------------------------------------------------------
@@ -62,9 +67,31 @@ public class OtelProvider {
         if (resolved != null) return resolved;
         synchronized (this) {
             if (resolved != null) return resolved;
-            resolved = resolve();
+            OpenTelemetry candidate = resolve();
+            // In inherit mode the zero-code agent may initialize its SDK lazily (e.g. as a
+            // Spring bean), so GlobalOpenTelemetry can still hold a placeholder that returns
+            // a default/noop meter. Don't cache in that case — the next tick will retry.
+            if (isSdkReady(candidate)) {
+                resolved = candidate;
+            } else {
+                JacocoOtelAgent.log("OTel SDK not ready yet (meter provider is default/noop) " +
+                    "— will retry on next collection tick");
+            }
+            return candidate;
         }
-        return resolved;
+    }
+
+    /**
+     * Returns true when {@code otel} has a real (non-default, non-noop) MeterProvider.
+     * A default MeterProvider signals that the SDK has not finished initialising yet.
+     */
+    static boolean isSdkReady(OpenTelemetry otel) {
+        try {
+            String meterClass = otel.getMeterProvider().get("__probe__").getClass().getName();
+            return !meterClass.contains("Default") && !meterClass.contains("Noop");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private OpenTelemetry resolve() {
