@@ -65,6 +65,10 @@ services:
     depends_on:
       lgtm:
         condition: service_healthy
+    volumes:
+      # Bind-mount so /api/coverage/dump writes jacoco.exec to the host.
+      # After dumping: mvn jacoco:report -f demo-app/pom.xml
+      - ./coverage:/app/coverage
     environment:
       # Our coverage agent — standalone mode config
       - JACOCO_OTEL_ENDPOINT=http://lgtm:4318
@@ -102,6 +106,8 @@ services:
     depends_on:
       lgtm:
         condition: service_healthy
+    volumes:
+      - ./coverage:/app/coverage
     environment:
       # Standard OTel env vars consumed by the zero-code agent
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://lgtm:4318

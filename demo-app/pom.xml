@@ -63,6 +63,26 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
             <!--
+                JaCoCo Maven plugin — used only for local report generation, not
+                during the Docker build.
+                Reads the exec file dumped by /api/coverage/dump from the running
+                container (bind-mounted to ./coverage/jacoco.exec on the host).
+
+                Usage after dumping:
+                  mvn jacoco:report -f demo-app/pom.xml
+                  open demo-app/target/site/jacoco/index.html
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <dataFile>${project.basedir}/../coverage/jacoco.exec</dataFile>
+                    <outputDirectory>${project.reporting.outputDirectory}/jacoco</outputDirectory>
+                </configuration>
+            </plugin>
+
+            <!--
                 Copy the JaCoCo agent jar to target/agents/ during the build
                 so the Dockerfile can pick it up without a separate download step.
             -->
